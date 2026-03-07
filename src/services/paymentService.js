@@ -15,10 +15,10 @@ const LAPNET_API_URL = 'https://payment-gateway.phajay.co/v1/api/link/payment-li
  */
 const generatePaymentLink = async (orderNo, amount, description, tag1 = 'BusGoGo', tag2 = '', successCallbackUrl = '') => {
     try {
-        const apiKey = process.env.PHAPAY_API_KEY;
+        const apiKey = process.env.PHAPAY_API_KEY || process.env.PHAJAY_API_KEY;
 
         if (!apiKey) {
-            throw new Error('PHAPAY_API_KEY is not configured');
+            throw new Error('PHAPAY_API_KEY or PHAJAY_API_KEY is not configured');
         }
 
         // Create Basic Auth header
@@ -26,15 +26,19 @@ const generatePaymentLink = async (orderNo, amount, description, tag1 = 'BusGoGo
 
         const requestBody = {
             orderNo,
-            amount: 1,
+            amount: 1, // Temporary test value under 1000 limit for non-KYC accounts
             description,
             tag1,
             tag2
         };
 
-        // Add successCallbackUrl if provided
+        // Add callback URL if provided. Trying various parameter names commonly used by payment gateways.
         if (successCallbackUrl) {
             requestBody.successCallbackUrl = successCallbackUrl;
+            requestBody.redirectURL = successCallbackUrl;
+            requestBody.redirectUrl = successCallbackUrl;
+            requestBody.callbackUrl = successCallbackUrl;
+            requestBody.returnUrl = successCallbackUrl;
         }
 
         const response = await axios.post(

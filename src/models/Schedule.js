@@ -49,9 +49,19 @@ const scheduleSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['active', 'inactive', 'completed', 'cancelled'],
+        enum: ['active', 'inactive', 'in-progress', 'completed', 'cancelled'],
         default: 'active',
     },
+    driverId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        default: null,
+    },
+    currentLocation: {
+        lat: { type: Number },
+        lng: { type: Number },
+        updatedAt: { type: Date }
+    }
 }, {
     timestamps: true,
 });

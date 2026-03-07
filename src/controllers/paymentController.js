@@ -13,31 +13,16 @@ const createPaymentLink = async (req, res, next) => {
             throw new Error('Booking IDs and amount are required');
         }
 
-        console.log('DEBUG HEADERS:', {
-            origin: req.headers.origin,
-            referer: req.headers.referer,
-            host: req.headers.host
-        });
-
         // Generate unique order number
         const orderNo = `BOOKING_${Date.now()}`;
 
-        // Success callback URL - where user returns after payment
-        // Dynamic based on request origin (localhost or production)
-        let clientUrl = req.headers.origin;
-        if (!clientUrl && req.headers.referer) {
-            // Extract origin from referer (e.g., http://localhost:5173/payment -> http://localhost:5173)
-            try {
-                const url = new URL(req.headers.referer);
-                clientUrl = url.origin;
-            } catch (e) {
-                console.log('Error parsing referer:', e);
-            }
-        }
-        clientUrl = clientUrl || 'https://kavu1000.github.io/netlify_deploy_easyBus';
+        // Success callback URL – where user lands after completing payment on Phajay
+        // Force the use of FRONTEND_URL or localhost instead of relying on potentially incorrect origin headers
+        const clientUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-        const successCallbackUrl = `${clientUrl}/#/booking-success?orderNo=${orderNo}`;
-        console.log('DEBUG: Generated Callback URL:', successCallbackUrl);
+        // Next.js uses file-system routing (no hash), so path is /booking-success
+        const successCallbackUrl = `${clientUrl}/booking-success?bookingId=${bookingIds[0]}&status=paid`;
+        console.log('Generated Phajay callback URL:', successCallbackUrl);
 
         // Generate payment link
         const paymentData = await generatePaymentLink(
@@ -60,6 +45,11 @@ const createPaymentLink = async (req, res, next) => {
                 })
             )
         );
+
+        if (!paymentData.redirectURL) {
+            res.status(502);
+            throw new Error('Phajay gateway did not return a payment URL');
+        }
 
         res.status(200).json({
             success: true,

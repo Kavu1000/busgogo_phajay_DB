@@ -39,7 +39,7 @@ const createSchedule = async (req, res, next) => {
 const getAllSchedules = async (req, res, next) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = parseInt(req.query.limit) || 100;  // higher default so all schedules return
         const skip = (page - 1) * limit;
 
         const filter = {};
@@ -57,18 +57,35 @@ const getAllSchedules = async (req, res, next) => {
         }
 
         if (req.query.date) {
-            // Match date (ignoring time)
+            // Extend ±12 hours so schedules stored at local midnight UTC+7
+            // (= 17:00 UTC the previous calendar day) are never excluded.
             const date = new Date(req.query.date);
-            const nextDate = new Date(date);
-            nextDate.setDate(date.getDate() + 1);
-            filter.date = { $gte: date, $lt: nextDate };
+            date.setHours(date.getHours() - 12);          // go back 12 h
+            const nextDate = new Date(req.query.date);
+            nextDate.setDate(nextDate.getDate() + 1);
+            nextDate.setHours(nextDate.getHours() + 12);  // go forward 12 h
+
+            const dateFilter = { $gte: date, $lt: nextDate };
+
+            if (filter.status) {
+                // A specific status is already filtered – just add the date range
+                filter.date = dateFilter;
+            } else {
+                // No specific status – always show in-progress trips (active driver trips)
+                // regardless of the stored date, plus any schedule within the date window
+                filter.$or = [
+                    { date: dateFilter },
+                    { status: 'in-progress' }
+                ];
+            }
         }
 
         const schedules = await Schedule.find(filter)
             .populate('busId', 'name company licensePlate capacity phone')
+            .populate('driverId', 'username email')
             .limit(limit)
             .skip(skip)
-            .sort({ date: 1, departureTime: 1 });
+            .sort({ date: -1, departureTime: -1 });
 
         const total = await Schedule.countDocuments(filter);
 
@@ -243,6 +260,215 @@ const updateExpiredSchedules = async (req, res, next) => {
     }
 };
 
+// @desc    Get current trip for logged in driver
+// @route   GET /api/schedules/driver/current
+// @access  Private/Driver
+const getCurrentDriverTrip = async (req, res, next) => {
+    try {
+        // Look ±1 day around now to handle timezone differences between
+        // the server (UTC) and the driver's local timezone.
+        // The `status` field (active/in-progress) is the real indicator of a current trip.
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+
+        const dayAfterTomorrow = new Date();
+        dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+        dayAfterTomorrow.setHours(0, 0, 0, 0);
+
+        // Admins can see any active schedule; drivers only see their assigned ones
+        const filter = {
+            status: { $in: ['active', 'in-progress'] },
+            date: { $gte: yesterday, $lt: dayAfterTomorrow },
+        };
+
+        if (req.user.role !== 'admin') {
+            filter.driverId = req.user._id;
+        }
+
+        const schedule = await Schedule.findOne(filter)
+            .populate('busId', 'name licensePlate capacity')
+            .sort({ departureTime: 1 });
+
+        if (!schedule) {
+            return res.status(200).json({
+                success: true,
+                data: null,
+                message: 'No active trips found',
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: schedule,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Start driver trip
+// @route   PATCH /api/schedules/:id/start
+// @access  Private/Driver
+const startTrip = async (req, res, next) => {
+    try {
+        // Admins can start any schedule; drivers can only start their assigned ones
+        const filter = { _id: req.params.id };
+        if (req.user.role !== 'admin') {
+            filter.driverId = req.user._id;
+        }
+
+        const schedule = await Schedule.findOne(filter);
+
+        if (!schedule) {
+            res.status(404);
+            throw new Error('Schedule not found or not assigned to you');
+        }
+
+        if (schedule.status !== 'active') {
+            res.status(400);
+            throw new Error(`Cannot start trip. Current status is "${schedule.status}"`);
+        }
+
+        schedule.status = 'in-progress';
+        await schedule.save();
+
+        // Emit socket event to notify staff
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('schedule_updated', { scheduleId: schedule._id, status: 'in-progress' });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: schedule,
+            message: 'Trip started successfully',
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    End driver trip
+// @route   PATCH /api/schedules/:id/end
+// @access  Private/Driver
+const endTrip = async (req, res, next) => {
+    try {
+        // Admins can end any schedule; drivers can only end their assigned ones
+        const filter = { _id: req.params.id };
+        if (req.user.role !== 'admin') {
+            filter.driverId = req.user._id;
+        }
+
+        const schedule = await Schedule.findOne(filter);
+
+        if (!schedule) {
+            res.status(404);
+            throw new Error('Schedule not found or not assigned to you');
+        }
+
+        if (schedule.status !== 'in-progress') {
+            res.status(400);
+            throw new Error(`Cannot end trip. Current status is "${schedule.status}"`);
+        }
+
+        schedule.status = 'completed';
+        await schedule.save();
+
+        // Emit socket event to notify staff
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('schedule_updated', { scheduleId: schedule._id, status: 'completed' });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: schedule,
+            message: 'Trip ended successfully',
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Update driver's current location
+// @route   PATCH /api/schedules/:id/location
+// @access  Private/Driver
+const updateLocation = async (req, res, next) => {
+    try {
+        const { lat, lng } = req.body;
+
+        if (lat === undefined || lng === undefined) {
+            res.status(400);
+            throw new Error('Latitude and longitude are required');
+        }
+
+        const schedule = await Schedule.findOne({
+            _id: req.params.id,
+            driverId: req.user._id,
+        });
+
+        if (!schedule) {
+            res.status(404);
+            throw new Error('Schedule not found or not assigned to you');
+        }
+
+        if (schedule.status !== 'in-progress') {
+            res.status(400);
+            throw new Error('Location can only be updated for in-progress trips');
+        }
+
+        schedule.currentLocation = {
+            lat,
+            lng,
+            updatedAt: new Date()
+        };
+        await schedule.save();
+
+        res.status(200).json({
+            success: true,
+            data: schedule.currentLocation,
+            message: 'Location updated',
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Get passenger list for a trip
+// @route   GET /api/schedules/:id/passengers
+// @access  Private/Driver/Admin
+const getPassengersForTrip = async (req, res, next) => {
+    try {
+        const schedule = await Schedule.findById(req.params.id);
+
+        if (!schedule) {
+            res.status(404);
+            throw new Error('Schedule not found');
+        }
+
+        // Must be assigned driver or admin
+        if (req.user.role !== 'admin' && String(schedule.driverId) !== String(req.user._id)) {
+            res.status(403);
+            throw new Error('Not authorized to view passengers for this trip');
+        }
+
+        // Fetch bookings for this schedule, joining user details
+        const Booking = require('../models/Booking');
+        const passengers = await Booking.find({ scheduleId: req.params.id })
+            .populate('userId', 'username email phone')
+            .sort({ seatNumber: 1 });
+
+        res.status(200).json({
+            success: true,
+            data: passengers,
+            count: passengers.length,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     createSchedule,
     getAllSchedules,
@@ -251,5 +477,10 @@ module.exports = {
     deleteSchedule,
     updateExpiredSchedules,
     getCities,
+    getCurrentDriverTrip,
+    startTrip,
+    endTrip,
+    updateLocation,
+    getPassengersForTrip,
 };
 

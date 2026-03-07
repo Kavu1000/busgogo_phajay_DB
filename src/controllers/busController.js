@@ -167,6 +167,25 @@ const getAvailableSeats = async (req, res, next) => {
     }
 };
 
+// @desc    Get all bus locations (lat/lng) for map display
+// @route   GET /api/buses/locations
+// @access  Public
+const getBusLocations = async (req, res, next) => {
+    try {
+        const buses = await Bus.find({
+            lat: { $ne: null },
+            lng: { $ne: null },
+        }).select('name licensePlate lat lng locationName company');
+
+        res.status(200).json({
+            success: true,
+            data: buses,
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     createBus,
     getAllBuses,
@@ -174,4 +193,5 @@ module.exports = {
     updateBus,
     deleteBus,
     getAvailableSeats,
+    getBusLocations,
 };

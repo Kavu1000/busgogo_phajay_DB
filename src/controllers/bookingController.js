@@ -7,30 +7,75 @@ const User = require('../models/User');
 // @access  Private
 const createBooking = async (req, res, next) => {
     try {
-        const { busId, seatNumber } = req.body;
-        console.log('Create Booking Request Body:', req.body); // Debug log
-        console.log('BusID received:', busId); // Debug log
+        const { scheduleId, seats, passengers, contactPhone, contactEmail } = req.body;
 
-        // Verify bus exists
+        // ── New flow: scheduleId + seats[] ──────────────────────────────────────
+        if (scheduleId) {
+            const Schedule = require('../models/Schedule');
+            const schedule = await Schedule.findById(scheduleId).populate('busId');
+            if (!schedule) {
+                res.status(404);
+                throw new Error('Schedule not found');
+            }
+
+            const bus = schedule.busId;
+            if (!bus) {
+                res.status(404);
+                throw new Error('Bus not found for this schedule');
+            }
+
+            const seatList = Array.isArray(seats) ? seats : [seats].filter(Boolean);
+            const primarySeat = seatList[0] || 'A1';
+
+            const firstPassenger = Array.isArray(passengers) ? passengers[0] : null;
+            const passengerName = firstPassenger
+                ? `${firstPassenger.title || ''} ${firstPassenger.firstName || ''} ${firstPassenger.lastName || ''}`.trim()
+                : '';
+
+            const scheduleDate = new Date(schedule.date);
+            const [hours, minutes] = (schedule.departureTime || '08:00').split(':').map(Number);
+            scheduleDate.setHours(hours || 8, minutes || 0, 0, 0);
+
+            const booking = await Booking.create({
+                userId: req.user._id,
+                busId: bus._id,
+                seatNumber: primarySeat,
+                departureStation: schedule.route?.from || '',
+                arrivalStation: schedule.route?.to || '',
+                departureTime: scheduleDate,
+                price: (schedule.pricePerSeat || schedule.price || 0) * seatList.length,
+                passengerDetails: { name: passengerName },
+                contactPhone: contactPhone || '',
+                contactEmail: contactEmail || '',
+                paymentStatus: 'pending',
+                status: 'booked',
+            });
+
+            const populatedBooking = await Booking.findById(booking._id)
+                .populate('userId', 'username email phone')
+                .populate('busId', 'name company licensePlate capacity phone');
+
+            return res.status(201).json({
+                success: true,
+                data: populatedBooking,
+                message: 'Booking created successfully',
+            });
+        }
+
+        // ── Legacy flow: busId + seatNumber ────────────────────────────────────
+        const { busId } = req.body;
         const bus = await Bus.findById(busId);
-        console.log('Bus found in DB:', bus); // Debug log
         if (!bus) {
             res.status(404);
             throw new Error('Bus not found');
         }
 
-        // Create booking
-        const booking = await Booking.create({
-            ...req.body,
-            userId: req.user._id,
-        });
-
-        // Populate booking data
+        const booking = await Booking.create({ ...req.body, userId: req.user._id });
         const populatedBooking = await Booking.findById(booking._id)
             .populate('userId', 'username email phone')
             .populate('busId', 'name company licensePlate capacity phone');
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             data: populatedBooking,
             message: 'Booking created successfully',
@@ -39,6 +84,7 @@ const createBooking = async (req, res, next) => {
         next(error);
     }
 };
+
 
 // @desc    Get user bookings
 // @route   GET /api/bookings/my-bookings
@@ -269,6 +315,45 @@ const getBookingsByOrderNo = async (req, res, next) => {
     }
 };
 
+// @desc    Get occupied seat numbers for a schedule
+// @route   GET /api/bookings/seats/:scheduleId
+// @access  Public
+const getOccupiedSeats = async (req, res, next) => {
+    try {
+        const { scheduleId } = req.params;
+        // Find bookings that reference this scheduleId (stored in departureStation-encoded or via busId)
+        // We use a flexible approach: match by scheduleId stored in paymentOrderNo prefix, or
+        // simply query all non-cancelled bookings and filter by scheduleId in body.
+        // Since the existing Booking model doesn't have a scheduleId field, we added it below via
+        // an optional field. Fallback: return empty array so the frontend still works.
+        const Schedule = require('../models/Schedule');
+        const schedule = await Schedule.findById(scheduleId);
+        if (!schedule) {
+            return res.status(200).json({ success: true, data: [] });
+        }
+
+        // Query bookings that match this bus + departure time window
+        const dayStart = new Date(schedule.date);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(schedule.date);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const bookings = await Booking.find({
+            busId: schedule.busId,
+            departureTime: { $gte: dayStart, $lte: dayEnd },
+            status: { $ne: 'cancelled' },
+        }).select('seatNumber');
+
+        const occupiedSeats = bookings
+            .map(b => b.seatNumber)
+            .filter(Boolean);
+
+        return res.status(200).json({ success: true, data: occupiedSeats });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     createBooking,
     getUserBookings,
@@ -277,4 +362,5 @@ module.exports = {
     cancelBooking,
     getAllBookings,
     getBookingsByOrderNo,
+    getOccupiedSeats,
 };

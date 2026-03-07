@@ -8,12 +8,24 @@ const {
     deleteSchedule,
     updateExpiredSchedules,
     getCities,
+    getCurrentDriverTrip,
+    startTrip,
+    endTrip,
+    updateLocation,
+    getPassengersForTrip,
 } = require('../controllers/scheduleController');
 const { protect, admin } = require('../middleware/auth');
 
 // Public routes
 router.get('/', getAllSchedules);
 router.get('/cities', getCities);
+
+// Driver routes
+router.get('/driver/current', protect, getCurrentDriverTrip);
+router.patch('/:id/start', protect, startTrip);
+router.patch('/:id/end', protect, endTrip);
+router.patch('/:id/location', protect, updateLocation);
+router.get('/:id/passengers', protect, getPassengersForTrip);
 
 // Admin routes - specific routes before :id
 router.post('/update-expired', protect, admin, updateExpiredSchedules);

@@ -1,8 +1,10 @@
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
+const { attachChatSocket } = require('./socket/chatSocket');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -13,13 +15,19 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const qrRoutes = require('./routes/qrRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const { startScheduler } = require('./services/scheduleUpdater');
 
 // Initialize express app
 const app = express();
 
 // Middleware
-app.use(cors({}));
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['*'],
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -37,7 +45,7 @@ app.get('/', (req, res) => {
     res.status(200).json({
         success: true,
         message: 'Welcome to Easy Bus Ticket API',
-        documentation: '/api-docs', // Optional if you have docs
+        documentation: '/api-docs',
     });
 });
 
@@ -54,6 +62,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -66,16 +76,21 @@ app.use((req, res) => {
 // Error handler middleware (must be last)
 app.use(errorHandler);
 
+// ── Wrap in http.Server so Socket.io shares the same port as REST ──────
+const httpServer = http.createServer(app);
+attachChatSocket(httpServer);
+
 // Connect to database and start server
 const startServer = async () => {
     try {
         await connectDB();
 
         const PORT = process.env.PORT || 8000;
-        app.listen(PORT, () => {
+        httpServer.listen(PORT, () => {
             console.log(`Server running on port ${PORT}`);
             console.log(`Frontend URL: ${process.env.FRONTEND_URL}`);
             console.log(`CWD: ${process.cwd()}`);
+            console.log(`Socket.io chat attached on same port`);
 
             // Start the schedule updater cron job
             startScheduler();

@@ -40,7 +40,8 @@ const updateExpiredSchedules = async () => {
                 price: schedule.price,
                 pricePerSeat: schedule.pricePerSeat,
                 availableSeats: schedule.availableSeats,
-                status: 'active'
+                status: 'active',
+                driverId: schedule.driverId || null,  // carry driver assignment forward
             });
 
             await newSchedule.save();

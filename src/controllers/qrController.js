@@ -147,6 +147,12 @@ const verifyQR = async (req, res, next) => {
         qrCode.scannedBy = req.user._id;
         await qrCode.save();
 
+        // Auto-checkin passenger if valid QR
+        if (qrCode.ticketId && qrCode.ticketId.status !== 'checked-in') {
+            await Booking.findByIdAndUpdate(qrCode.ticketId._id, { status: 'checked-in' });
+            qrCode.ticketId.status = 'checked-in';
+        }
+
         res.status(200).json({
             success: true,
             data: {

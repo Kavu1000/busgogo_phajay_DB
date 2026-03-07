@@ -28,6 +28,19 @@ const busSchema = new mongoose.Schema({
         required: [true, 'Phone number is required'],
         trim: true,
     },
+    lat: {
+        type: Number,
+        default: null,
+    },
+    lng: {
+        type: Number,
+        default: null,
+    },
+    locationName: {
+        type: String,
+        default: '',
+        trim: true,
+    },
 }, {
     timestamps: true,
 });

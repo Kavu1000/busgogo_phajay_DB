@@ -7,11 +7,13 @@ const {
     updateBus,
     deleteBus,
     getAvailableSeats,
+    getBusLocations,
 } = require('../controllers/busController');
 const { protect, admin } = require('../middleware/auth');
 
 // Public routes
 router.get('/', getAllBuses);
+router.get('/locations', getBusLocations); // MUST be before /:id
 router.get('/:id', getBusById);
 router.get('/:id/seats', getAvailableSeats);
 
