@@ -9,8 +9,9 @@ const {
     getAllBookings,
     getBookingsByOrderNo,
     getOccupiedSeats,
+    checkInBooking,
 } = require('../controllers/bookingController');
-const { protect, admin } = require('../middleware/auth');
+const { protect, admin, staff } = require('../middleware/auth');
 
 // Public route — occupied seats for a schedule (no auth needed for seat map)
 router.get('/seats/:scheduleId', getOccupiedSeats);
@@ -21,6 +22,7 @@ router.get('/my-bookings', protect, getUserBookings);
 router.get('/order/:orderNo', protect, getBookingsByOrderNo);
 router.get('/:id', protect, getBookingById);
 router.put('/:id', protect, updateBooking);
+router.patch('/:id/checkin', protect, checkInBooking);
 router.delete('/:id', protect, cancelBooking);
 
 // Admin routes

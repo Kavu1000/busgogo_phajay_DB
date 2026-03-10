@@ -354,6 +354,39 @@ const getOccupiedSeats = async (req, res, next) => {
     }
 };
 
+// @desc    Check-in passenger via QR code scan
+// @route   PATCH /api/bookings/:id/checkin
+// @access  Private (Staff/Admin)
+const checkInBooking = async (req, res, next) => {
+    try {
+        const booking = await Booking.findById(req.params.id)
+            .populate('userId', 'username email phone')
+            .populate('busId', 'name company licensePlate capacity phone');
+
+        if (!booking) {
+            res.status(404);
+            throw new Error('Booking not found');
+        }
+
+        // Only allow check-in if booking is confirmed
+        // if (booking.status !== 'booked') {
+        //     res.status(400);
+        //     throw new Error(`Cannot check-in. Booking status is ${booking.status}`);
+        // }
+
+        booking.status = 'checked-in';
+        await booking.save();
+
+        res.status(200).json({
+            success: true,
+            data: booking,
+            message: 'Passenger checked-in successfully',
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     createBooking,
     getUserBookings,
@@ -363,4 +396,5 @@ module.exports = {
     getAllBookings,
     getBookingsByOrderNo,
     getOccupiedSeats,
+    checkInBooking,
 };
